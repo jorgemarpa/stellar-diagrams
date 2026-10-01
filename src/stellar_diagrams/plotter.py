@@ -2,10 +2,9 @@ import warnings
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import seaborn as sns
-from astroquery.gaia import Gaia
-from astroquery.mast import Catalogs
+
+from .utils import fetch_catalog_data
 
 
 class StellarDiagramMaker:
@@ -21,70 +20,82 @@ class StellarDiagramMaker:
         self.data = None
 
     def fetch_data(self):
-        print(f"Querying {self.catalog.upper()} catalog...")
+        """
+        Queries the selected catalog, utilizing lru_cache from utils for duplicate requests.
+        """
+        # Check cache hits before calling the function
+        pre_cache_info = fetch_catalog_data.cache_info()
 
-        if self.catalog == "gaia":
-            self.data = self._query_gaia()
-        elif self.catalog == "tic":
-            self.data = self._query_tic()
-        else:
-            raise ValueError("Catalog must be 'gaia' or 'tic'.")
+        # Call the cached standalone function
+        # Append .copy() so plotting manipulations don't mutate the cached DataFrame
+        self.data = fetch_catalog_data(
+            self.catalog, self.max_stars, self.mag_limit
+        ).copy()
 
-        print(f"Retrieved and cleaned {len(self.data)} stars.")
+        # Check cache hits after calling the function to see if we just loaded from memory
+        post_cache_info = fetch_catalog_data.cache_info()
+
+        if post_cache_info.hits > pre_cache_info.hits:
+            print(f"Loading {self.catalog.upper()} data from memory cache...")
+            print(f"Loaded {len(self.data)} cached stars.")
+
         return self.data
 
-    def _query_gaia(self):
-        """Executes ADQL query to Gaia DR3."""
-        # Removed lum_gspphot and ORDER BY random_index to prevent Server 500 crashes
-        query = f"""
-        SELECT TOP {self.max_stars}
-        source_id, parallax, parallax_over_error, phot_g_mean_mag as app_mag, 
-        bp_rp as color, teff_gspphot as teff
-        FROM gaiadr3.gaia_source
-        WHERE phot_g_mean_mag < {self.mag_limit}
-        AND parallax_over_error > 10
-        AND parallax > 0
-        AND bp_rp IS NOT NULL
-        AND teff_gspphot IS NOT NULL
+    def save_catalog(self, filepath):
         """
-        job = Gaia.launch_job_async(query, dump_to_file=False)
-        df = job.get_results().to_pandas()
+        Saves the currently loaded catalog data to a local CSV file.
 
-        # Calculate Absolute Magnitude: M = m - 10 + 5*log10(parallax_in_mas)
-        df["abs_mag"] = df["app_mag"] - 10 + 5 * np.log10(df["parallax"])
-        return df
+        Parameters:
+        - filepath (str): The local file path (e.g., 'data/gaia_sample.csv').
+        """
+        if self.data is None or len(self.data) == 0:
+            raise ValueError("No data to save. Run fetch_data() first.")
 
-    def _query_tic(self):
-        """Queries the TESS Input Catalog via MAST."""
-        mast_data = Catalogs.query_criteria(
-            catalog="Tic", Tmag=[0, self.mag_limit], plx=[5, 1000], objType="STAR"
-        )
-        df = mast_data.to_pandas()
+        # Ensure the target directory exists
+        directory = os.path.dirname(filepath)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
 
-        # Drop rows missing crucial data (removed 'lum' dependency)
-        df = df.dropna(subset=["Tmag", "plx", "e_plx", "Teff"])
+        self.data.to_csv(filepath, index=False)
+        print(f"Saved {len(self.data)} stars to {filepath}")
 
-        df = df.rename(columns={"Tmag": "app_mag", "plx": "parallax", "Teff": "teff"})
+    def load_catalog(self, filepath):
+        """
+        Loads catalog data from a local CSV file into the maker instance.
 
-        # Apply data cleaning
-        df["parallax_over_error"] = df["parallax"] / df["e_plx"]
-        df = df[df["parallax_over_error"] > 10].copy()
+        Parameters:
+        - filepath (str): The local file path to load (e.g., 'data/gaia_sample.csv').
+        """
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"The file {filepath} was not found.")
 
-        # Calculate Absolute Magnitude
-        df["abs_mag"] = df["app_mag"] - 10 + 5 * np.log10(df["parallax"])
+        self.data = pd.read_csv(filepath)
+        print(f"Loaded {len(self.data)} stars from {filepath}")
+        return self.data
 
-        # TIC fallback mapping
-        df["color"] = df["teff"]
+    def plot(self, diagram="hr", style="hex", figsize=(8, 6), ax=None):
+        """
+        Generates the requested plot.
 
-        return df.head(self.max_stars)
+        Parameters:
+        - diagram (str): 'cmd' (Color vs Abs Mag) or 'hr' (Temp vs Abs Mag).
+        - style (str): 'scatter', 'hex', or 'kde'.
+        - figsize (tuple): Figure dimensions (ignored if ax is provided).
+        - ax (matplotlib.axes.Axes, optional): An existing axis to plot on.
 
-    def plot(self, diagram="hr", style="hex", figsize=(8, 6)):
+        Returns:
+        - ax (matplotlib.axes.Axes): The axis containing the plot.
+        """
         if self.data is None or len(self.data) == 0:
             raise ValueError("No data found. Run fetch_data() first.")
 
-        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = False
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+            created_fig = True
+        else:
+            fig = ax.get_figure()
 
-        # Both diagrams will now use abs_mag as the Y-axis (Standard observational practice)
         if diagram == "cmd":
             x_col = "color"
             y_col = "abs_mag"
@@ -144,13 +155,17 @@ class StellarDiagramMaker:
             fontsize=14,
         )
 
-        # Invert axes (Brighter magnitudes are smaller numbers; hotter temps are higher numbers)
-        ax.invert_yaxis()
+        if not ax.yaxis_inverted():
+            ax.invert_yaxis()
 
         if diagram == "cmd" and self.catalog == "tic":
-            ax.invert_xaxis()
+            if not ax.xaxis_inverted():
+                ax.invert_xaxis()
         elif diagram == "hr":
-            ax.invert_xaxis()
+            if not ax.xaxis_inverted():
+                ax.invert_xaxis()
 
-        plt.tight_layout()
-        plt.show()
+        if created_fig:
+            plt.tight_layout()
+
+        return ax
