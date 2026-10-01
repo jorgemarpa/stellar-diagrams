@@ -49,7 +49,6 @@ maker.plot(diagram='cmd', style='hex')
 ## TODO
 
 Future features to implement:
-- Add lines with constant star radius
 - Add temperature colorbar
 - Add labels for HR regions
 - Add example of know stars to the diagram with names
