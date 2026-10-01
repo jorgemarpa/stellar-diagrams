@@ -19,25 +19,28 @@ class StellarDiagramMaker:
         self.mag_limit = mag_limit
         self.data = None
 
-    def fetch_data(self):
+    def fetch_data(self, stratified=False):
         """
         Queries the selected catalog, utilizing lru_cache from utils for duplicate requests.
+
+        Parameters:
+        - stratified (bool): If True, uses stratified sampling to ensure
+          representation across White Dwarfs, Main Sequence, Giants, etc.
         """
-        # Check cache hits before calling the function
         pre_cache_info = fetch_catalog_data.cache_info()
 
-        # Call the cached standalone function
-        # Append .copy() so plotting manipulations don't mutate the cached DataFrame
+        # Pass the stratified flag down to the cached function
         self.data = fetch_catalog_data(
-            self.catalog, self.max_stars, self.mag_limit
+            self.catalog, self.max_stars, self.mag_limit, stratified
         ).copy()
 
-        # Check cache hits after calling the function to see if we just loaded from memory
         post_cache_info = fetch_catalog_data.cache_info()
 
         if post_cache_info.hits > pre_cache_info.hits:
             print(f"Loading {self.catalog.upper()} data from memory cache...")
             print(f"Loaded {len(self.data)} cached stars.")
+
+        return self.data
 
         return self.data
 
