@@ -6,17 +6,31 @@ from astroquery.mast import Catalogs
 
 
 @lru_cache(maxsize=32)
-def fetch_catalog_data(catalog, max_stars, mag_limit, stratified=False):
+def fetch_catalog_data(
+    catalog: str, max_stars: int, mag_limit: float, stratified: bool = False
+) -> pd.DataFrame:
     """
-    Fetches and cleans data from the specified astronomical catalog.
+    Fetch and clean data from the specified astronomical catalog.
 
-    Parameters:
-    - catalog (str): 'gaia' or 'tic'
-    - max_stars (int): Maximum number of stars to return.
-    - mag_limit (float): Faintest apparent magnitude to query.
-    - stratified (bool): If True, queries specific stellar populations
-      to ensure a well-populated diagram across all evolutionary stages.
+    Parameters
+    ----------
+    catalog : str
+        The name of the catalog to query ('gaia' or 'tic').
+    max_stars : int
+        Maximum number of stars to return.
+    mag_limit : float
+        Faintest apparent magnitude to query.
+    stratified : bool, optional
+        If True, query specific stellar populations to ensure a well-populated
+        diagram across all evolutionary stages (default is False).
+
+    Returns
+    -------
+    pd.DataFrame
+        A dataframe containing the queried and cleaned stellar data.
     """
+    M_SUN = 4.74
+
     if stratified:
         print(
             f"Querying {catalog.upper()} catalog over network with stratified sampling..."
@@ -54,6 +68,7 @@ def fetch_catalog_data(catalog, max_stars, mag_limit, stratified=False):
             df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
             if not df.empty:
                 df["abs_mag"] = df["app_mag"] - 10 + 5 * np.log10(df["parallax"])
+                df["log_lum"] = -0.4 * (df["abs_mag"] - M_SUN)
 
         elif catalog == "tic":
             populations = {
@@ -94,6 +109,7 @@ def fetch_catalog_data(catalog, max_stars, mag_limit, stratified=False):
                 df["parallax_over_error"] = df["parallax"] / df["e_plx"]
                 df = df[df["parallax_over_error"] > 10].copy()
                 df["abs_mag"] = df["app_mag"] - 10 + 5 * np.log10(df["parallax"])
+                df["log_lum"] = -0.4 * (df["abs_mag"] - M_SUN)
                 df["color"] = df["teff"]
 
         else:
@@ -118,6 +134,7 @@ def fetch_catalog_data(catalog, max_stars, mag_limit, stratified=False):
 
             if not df.empty:
                 df["abs_mag"] = df["app_mag"] - 10 + 5 * np.log10(df["parallax"])
+                df["log_lum"] = -0.4 * (df["abs_mag"] - M_SUN)
 
         elif catalog == "tic":
             mast_data = Catalogs.query_criteria(
@@ -133,6 +150,7 @@ def fetch_catalog_data(catalog, max_stars, mag_limit, stratified=False):
                 df["parallax_over_error"] = df["parallax"] / df["e_plx"]
                 df = df[df["parallax_over_error"] > 10].copy()
                 df["abs_mag"] = df["app_mag"] - 10 + 5 * np.log10(df["parallax"])
+                df["log_lum"] = -0.4 * (df["abs_mag"] - M_SUN)
                 df["color"] = df["teff"]
                 df = df.head(max_stars)
 
